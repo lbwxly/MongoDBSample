@@ -1,5 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Runtime.InteropServices.ComTypes;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Bson.Serialization.IdGenerators;
@@ -18,7 +20,12 @@ namespace MongoDbSample
             //Modules = new List<Module>();
         }
         public string Name { get; set; }
+
+        public DateTime StartTime { get; set; }
+
         public List<MongoDBRef> Modules { get; set; }
+
+        public int ModuleCount { get; set; }
     }
 
     class Module : Entity
@@ -30,7 +37,10 @@ namespace MongoDbSample
     {
         static void Main(string[] args)
         {
-            DBRefSample();
+            //DBRefSample();
+            //OperatorSample();
+            //AggregationSample();
+            TransactionSample();
             Console.WriteLine("Done!");
             Console.ReadKey();
         }
@@ -97,17 +107,96 @@ namespace MongoDbSample
         /// C# driver also provide the BuilderDefinition instead.
         /// http://mongodb.github.io/mongo-csharp-driver/2.7/reference/driver/definitions/#definitions-and-builders
         /// </summary>
-        static void StageOperatorSample()
+        static void OperatorSample()
         {
+            var client = new MongoClient("mongodb://localhost:27017");
+            var db = client.GetDatabase("i18nMgr");
+            var projCollection = db.GetCollection<Project>("projects");
 
+            projCollection.InsertOne(new Project
+            {
+                Id = Guid.NewGuid(),
+                Name = "Proj1",
+                StartTime = new DateTime(2018, 2, 4)
+            });
+
+            projCollection.InsertOne(new Project
+            {
+                Id = Guid.NewGuid(),
+                Name = "Proj1",
+                StartTime = new DateTime(2019, 2, 4)
+            });
+
+            projCollection.InsertOne(new Project
+            {
+                Id = Guid.NewGuid(),
+                Name = "Proj1",
+                StartTime = new DateTime(2019, 4, 4)
+            });
+
+            // operator.
+            var projs = projCollection.Find(new BsonDocument
+                                            {
+                                                { "StartTime", new BsonDocument("$gt",new DateTime(2018,5,1))}
+                                            }).ToList();
+            Console.WriteLine($"Find with operator result count:{projs.Count}");
+
+            // filter definition.
+            var builder = Builders<Project>.Filter;
+            var filter = builder.Gt(x => x.StartTime, new DateTime(2018, 5, 1));
+            projs = projCollection.Find(filter).ToList();
+
+            Console.WriteLine($"Find with filter definition result count:{projs.Count}");
         }
 
         /// <summary>
-        /// Sample for aggregation
+        /// Sample for aggregation stage operator.
         /// https://docs.mongodb.com/manual/aggregation/
         /// </summary>
         static void AggregationSample()
         {
+            var client = new MongoClient("mongodb://localhost:27017");
+            var db = client.GetDatabase("i18nMgr");
+            var projCollection = db.GetCollection<Project>("projects");
+
+            projCollection.InsertOne(new Project
+            {
+                Id = Guid.NewGuid(),
+                Name = "Proj1",
+                ModuleCount = 2,
+                StartTime = new DateTime(2018, 2, 4)
+            });
+
+            projCollection.InsertOne(new Project
+            {
+                Id = Guid.NewGuid(),
+                Name = "Proj2",
+                ModuleCount = 4,
+                StartTime = new DateTime(2019, 2, 4)
+            });
+
+            projCollection.InsertOne(new Project
+            {
+                Id = Guid.NewGuid(),
+                Name = "Proj3",
+                ModuleCount = 1,
+                StartTime = new DateTime(2019, 2, 4)
+            });
+
+            var pipelineDefinition = new BsonDocument[]
+            {
+                new BsonDocument{{"$match", new BsonDocument("StartTime",new DateTime(2019,2,4))}},
+                new BsonDocument{{"$group",new BsonDocument
+                {
+                    { "_id",new BsonDocument("Name","$Name")},
+                    { "TotalModules",new BsonDocument("$sum","$ModuleCount")}
+                }}},
+                new BsonDocument{{"$sort",new BsonDocument("_id.Name", -1)}},
+            };
+            var projModuleCounts = projCollection.Aggregate<BsonDocument>(pipelineDefinition).ToList();
+            var result = projCollection.Aggregate<Project>()
+                .Match(x => x.StartTime == new DateTime(2019, 2, 4))
+                .Group(x => x.Name, g => new { Name = g.Key, Count = g.Sum(x => x.ModuleCount) }).ToList();
 
         }
 
@@ -117,7 +206,35 @@ namespace MongoDbSample
         /// </summary>
         static void TransactionSample()
         {
+            var id = Guid.NewGuid();
+            var client = new MongoClient("mongodb://localhost:27017");
+            var db = client.GetDatabase("i18nMgr");
+            var session = client.StartSession();
+            session.StartTransaction(new TransactionOptions(ReadConcern.Snapshot,
+                                                            new Optional<ReadPreference>(),
+                                                            WriteConcern.WMajority));
+            try
+            {
+                var projCollection = db.GetCollection<Project>("projects");
+                var moduleCollection = db.GetCollection<Module>("modules");
 
+                // Insert document separately.
+                var moduleId = Guid.NewGuid();
+                moduleCollection.InsertOne(session, new Module() { Id = moduleId, Name = "Module1" });
+                //projCollection.InsertOne(session, new Project
+                //{
+                //    Id = id,
+                //    Name = "Proj1",
+                //    Modules = new List<MongoDBRef>() { new MongoDBRef("modules", moduleId) }
+                //});
+
+                session.CommitTransaction();
+            }
+            catch (Exception e)
+            {
+                session.AbortTransaction();
+                Console.WriteLine(e);
+            }
         }
     }
 }
