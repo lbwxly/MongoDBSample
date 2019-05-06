@@ -21,10 +21,13 @@ namespace MongoDbSample
         }
         public string Name { get; set; }
 
+        [BsonIgnore]
         public DateTime StartTime { get; set; }
 
+        [BsonIgnore]
         public List<MongoDBRef> Modules { get; set; }
 
+        [BsonIgnore]
         public int ModuleCount { get; set; }
     }
 
@@ -35,14 +38,25 @@ namespace MongoDbSample
 
     class Program
     {
+        static string DatabaseName = "TranslationManager";
         static void Main(string[] args)
         {
+            SimpleSample();
             //DBRefSample();
             //OperatorSample();
             //AggregationSample();
-            TransactionSample();
+            //TransactionSample();
             Console.WriteLine("Done!");
             Console.ReadKey();
+        }
+
+        static void SimpleSample()
+        {
+            var id = Guid.NewGuid();
+            var client = new MongoClient("mongodb://localhost:27017");
+            var db = client.GetDatabase(DatabaseName);
+            var projCollection = db.GetCollection<Project>("projects");
+            projCollection.InsertOne(new Project { Id = id, Name = "Proj2", StartTime = DateTime.Now });
         }
 
         static void EmbedDocumentSample()
